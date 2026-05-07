@@ -1,0 +1,1362 @@
+(import ./helpers :as h)
+
+########################################################################
+
+(defn zipper
+  ``
+  Returns a new zipper consisting of two elements:
+
+  * `a-root` - the passed in root node.
+  * `state` - table of info about node's z-location in the tree with keys:
+    * `:ls` - left siblings
+    * `:pnodes` - path of nodes from root to current z-location
+    * `:pstate` - parent node's state
+    * `:rs` - right siblings
+    * `:changed?` - indicates whether "editing" has occured
+
+  `state` has a prototype table with four functions:
+
+  * :branch? - fn that tests if a node is a branch (has children)
+  * :children - fn that returns the child nodes for the given branch.
+  * :make-node - fn that takes a node + children and returns a new branch
+    node with the same.
+  * :make-state - fn for creating a new state
+  ``
+  [a-root branch?-fn children-fn make-node-fn]
+  #
+  (defn make-state_
+    [&opt ls_ rs_ pnodes_ pstate_ changed?_]
+    (table/setproto @{:ls ls_
+                      :pnodes pnodes_
+                      :pstate pstate_
+                      :rs rs_
+                      :changed? changed?_}
+                    @{:branch? branch?-fn
+                      :children children-fn
+                      :make-node make-node-fn
+                      :make-state make-state_}))
+  #
+  [a-root (make-state_)])
+
+(comment
+
+  # XXX
+
+  )
+
+(defn indexed-zip
+  ``
+  Returns a zipper for nested indexed data structures (tuples
+  or arrays), given a root data structure.
+  ``
+  [indexed]
+  (zipper indexed
+          indexed?
+          h/to-entries
+          (fn [_p xs] xs)))
+
+(comment
+
+  (def a-node
+    [:x [:y :z]])
+
+  (def [the-node the-state]
+    (indexed-zip a-node))
+
+  the-node
+  # =>
+  a-node
+
+  # merge is used to "remove" the prototype table of `st`
+  (merge {} the-state)
+  # =>
+  @{}
+
+  )
+
+(defn node
+  "Returns the node at `zloc`."
+  [zloc]
+  (get zloc 0))
+
+(comment
+
+  (node (indexed-zip [:a :b [:x :y]]))
+  # =>
+  [:a :b [:x :y]]
+
+  )
+
+(defn state
+  "Returns the state for `zloc`."
+  [zloc]
+  (get zloc 1))
+
+(comment
+
+  # merge is used to "remove" the prototype table of `st`
+  (merge {}
+         (-> (indexed-zip [:a [:b [:x :y]]])
+             state))
+  # =>
+  @{}
+
+  )
+
+(defn branch?
+  ``
+  Returns true if the node at `zloc` is a branch.
+  Returns false otherwise.
+  ``
+  [zloc]
+  (((state zloc) :branch?) (node zloc)))
+
+(comment
+
+  (branch? (indexed-zip [:a :b [:x :y]]))
+  # =>
+  true
+
+  )
+
+(defn children
+  ``
+  Returns children for a branch node at `zloc`.
+  Otherwise throws an error.
+  ``
+  [zloc]
+  (if (branch? zloc)
+    (((state zloc) :children) (node zloc))
+    (error "Called `children` on a non-branch zloc")))
+
+(comment
+
+  (children (indexed-zip [:a :b [:x :y]]))
+  # =>
+  [:a :b [:x :y]]
+
+  )
+
+(defn make-state
+  ``
+  Convenience function for calling the :make-state function for `zloc`.
+  ``
+  [zloc &opt ls rs pnodes pstate changed?]
+  (((state zloc) :make-state) ls rs pnodes pstate changed?))
+
+(comment
+
+  # merge is used to "remove" the prototype table of `st`
+  (merge {}
+         (make-state (indexed-zip [:a :b [:x :y]])))
+  # =>
+  @{}
+
+  )
+
+(defn down
+  ``
+  Moves down the tree, returning the leftmost child z-location of
+  `zloc`, or nil if there are no children.
+  ``
+  [zloc]
+  (when (branch? zloc)
+    (let [[z-node st] zloc
+          [k rest-kids kids]
+          (h/first-rest-maybe-all (children zloc))]
+      (when kids
+        [k
+         (make-state zloc
+                     []
+                     rest-kids
+                     (if (not (empty? st))
+                       (h/tuple-push (get st :pnodes) z-node)
+                       [z-node])
+                     st
+                     (get st :changed?))]))))
+
+(comment
+
+  (node (down (indexed-zip [:a :b [:x :y]])))
+  # =>
+  :a
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      branch?)
+  # =>
+  false
+
+  (try
+    (-> (indexed-zip [:a])
+        down
+        children)
+    ([e] e))
+  # =>
+  "Called `children` on a non-branch zloc"
+
+  (deep=
+    #
+    (merge {}
+           (-> [:a [:b [:x :y]]]
+               indexed-zip
+               down
+               state))
+    #
+    '@{:ls ()
+       :pnodes ((:a (:b (:x :y))))
+       :pstate @{}
+       :rs ((:b (:x :y)))})
+  # =>
+  true
+
+  )
+
+(defn right
+  ``
+  Returns the z-location of the right sibling of the node
+  at `zloc`, or nil if there is no such sibling.
+  ``
+  [zloc]
+  (let [[z-node st] zloc
+        {:ls ls :rs rs} st
+        [r rest-rs rs_] (h/first-rest-maybe-all rs)]
+    (when (and (not (empty? st)) rs_)
+      [r
+       (make-state zloc
+                   (h/tuple-push ls z-node)
+                   rest-rs
+                   (get st :pnodes)
+                   (get st :pstate)
+                   (get st :changed?))])))
+
+(comment
+
+  (-> (indexed-zip [:a :b])
+      down
+      right
+      node)
+  # =>
+  :b
+
+  (-> (indexed-zip [:a])
+      down
+      right)
+  # =>
+  nil
+
+  )
+
+(defn make-node
+  ``
+  Returns a branch node, given `zloc`, `a-node` and `kids`.
+  ``
+  [zloc a-node kids]
+  (((state zloc) :make-node) a-node kids))
+
+(comment
+
+  (make-node (indexed-zip [:a :b [:x :y]])
+             [:a :b] [:x :y])
+  # =>
+  [:x :y]
+
+  )
+
+(defn up
+  ``
+  Moves up the tree, returning the parent z-location of `zloc`,
+  or nil if at the root z-location.
+  ``
+  [zloc]
+  (let [[z-node st] zloc
+        {:ls ls
+         :pnodes pnodes
+         :pstate pstate
+         :rs rs
+         :changed? changed?} st]
+    (when pnodes
+      (let [pnode (last pnodes)]
+        (if changed?
+          [(make-node zloc pnode [;ls z-node ;rs])
+           (make-state zloc
+                       (get pstate :ls)
+                       (get pstate :rs)
+                       (get pstate :pnodes)
+                       (get pstate :pstate)
+                       true)]
+          [pnode pstate])))))
+
+(comment
+
+  (def m-zip
+    (indexed-zip [:a :b [:x :y]]))
+
+  (deep=
+    (-> m-zip
+        down
+        up)
+    m-zip)
+  # =>
+  true
+
+  (deep=
+    (-> m-zip
+        down
+        right
+        right
+        down
+        up
+        up)
+    m-zip)
+  # =>
+  true
+
+  )
+
+# XXX: used by `root` and `df-next`
+(defn end?
+  "Returns true if `zloc` represents the end of a depth-first walk."
+  [zloc]
+  (= :end (state zloc)))
+
+(defn root
+  ``
+  Moves all the way up the tree for `zloc` and returns the node at
+  the root z-location.
+  ``
+  [zloc]
+  (if (end? zloc)
+    (node zloc)
+    (if-let [p (up zloc)]
+      (root p)
+      (node zloc))))
+
+(comment
+
+  (def a-zip
+    (indexed-zip [:a :b [:x :y]]))
+
+  (node a-zip)
+  # =>
+  (-> a-zip
+      down
+      right
+      right
+      down
+      root)
+
+  )
+
+(defn df-next
+  ``
+  Moves to the next z-location, depth-first.  When the end is
+  reached, returns a special z-location detectable via `end?`.
+  Does not move if already at the end.
+  ``
+  [zloc]
+  #
+  (defn recur
+    [a-loc]
+    (if (up a-loc)
+      (or (right (up a-loc))
+          (recur (up a-loc)))
+      [(node a-loc) :end]))
+  #
+  (if (end? zloc)
+    zloc
+    (or (and (branch? zloc) (down zloc))
+        (right zloc)
+        (recur zloc))))
+
+(comment
+
+  (def a-zip
+    (indexed-zip [:a :b [:x]]))
+
+  (node (df-next a-zip))
+  # =>
+  :a
+
+  (-> a-zip
+      df-next
+      df-next
+      node)
+  # =>
+  :b
+
+  (-> a-zip
+      df-next
+      df-next
+      df-next
+      df-next
+      df-next
+      end?)
+  # =>
+  true
+
+  )
+
+(defn replace
+  "Replaces existing node at `zloc` with `a-node`, without moving."
+  [zloc a-node]
+  (let [[_ st] zloc]
+    [a-node
+     (make-state zloc
+                 (get st :ls)
+                 (get st :rs)
+                 (get st :pnodes)
+                 (get st :pstate)
+                 true)]))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      (replace :w)
+      root)
+  # =>
+  [:w :b [:x :y]]
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      right
+      down
+      (replace :w)
+      root)
+  # =>
+  [:a :b [:w :y]]
+
+  )
+
+(defn edit
+  ``
+  Replaces the node at `zloc` with the value of `(f node args)`,
+  where `node` is the node associated with `zloc`.
+  ``
+  [zloc f & args]
+  (replace zloc
+           (apply f (node zloc) args)))
+
+(comment
+
+  (-> (indexed-zip [1 2 [8 9]])
+      down
+      (edit inc)
+      root)
+  # =>
+  [2 2 [8 9]]
+
+  (-> (indexed-zip [1 2 [8 9]])
+      down
+      (edit inc)
+      right
+      (edit inc)
+      right
+      down
+      (edit dec)
+      right
+      (edit dec)
+      root)
+  # =>
+  [2 3 [7 8]]
+
+  )
+
+(defn insert-child
+  ``
+  Inserts `child` as the leftmost child of the node at `zloc`,
+  without moving.
+  ``
+  [zloc child]
+  (replace zloc
+           (make-node zloc
+                      (node zloc)
+                      [child ;(children zloc)])))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      (insert-child :c)
+      root)
+  # =>
+  [:c :a :b [:x :y]]
+
+  )
+
+(defn append-child
+  ``
+  Appends `child` as the rightmost child of the node at `zloc`,
+  without moving.
+  ``
+  [zloc child]
+  (replace zloc
+           (make-node zloc
+                      (node zloc)
+                      [;(children zloc) child])))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      (append-child :c)
+      root)
+  # =>
+  [:a :b [:x :y] :c]
+
+  )
+
+(defn rightmost
+  ``
+  Returns the z-location of the rightmost sibling of the node at
+  `zloc`, or the current node's z-location if there are none to the
+  right.
+  ``
+  [zloc]
+  (let [[z-node st] zloc
+        {:ls ls :rs rs} st]
+    (if (and (not (empty? st))
+             (indexed? rs)
+             (not (empty? rs)))
+      [(last rs)
+       (make-state zloc
+                   (h/tuple-push ls z-node ;(h/butlast rs))
+                   []
+                   (get st :pnodes)
+                   (get st :pstate)
+                   (get st :changed?))]
+      zloc)))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      rightmost
+      node)
+  # =>
+  [:x :y]
+
+  )
+
+(defn remove
+  ``
+  Removes the node at `zloc`, returning the z-location that would have
+  preceded it in a depth-first walk.  Throws an error if called at the
+  root z-location.
+  ``
+  [zloc]
+  (let [[_z-node st] zloc
+        {:ls ls
+         :pnodes pnodes
+         :pstate pstate
+         :rs rs} st]
+    #
+    (defn recur
+      [a-zloc]
+      (if-let [child (and (branch? a-zloc) (down a-zloc))]
+        (recur (rightmost child))
+        a-zloc))
+    #
+    (if (not (empty? st))
+      (if (pos? (length ls))
+        (recur [(last ls)
+                (make-state zloc
+                            (h/butlast ls)
+                            rs
+                            pnodes
+                            pstate
+                            true)])
+        [(make-node zloc (last pnodes) rs)
+         (make-state zloc
+                     (get pstate :ls)
+                     (get pstate :rs)
+                     (get pstate :pnodes)
+                     (get pstate :pstate)
+                     true)])
+      (error "Called `remove` at root"))))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      remove
+      node)
+  # =>
+  :a
+
+  (try
+    (remove (indexed-zip [:a :b [:x :y]]))
+    ([e] e))
+  # =>
+  "Called `remove` at root"
+
+  )
+
+(defn left
+  ``
+  Returns the z-location of the left sibling of the node
+  at `zloc`, or nil if there is no such sibling.
+  ``
+  [zloc]
+  (let [[z-node st] zloc
+        {:ls ls :rs rs} st]
+    (when (and (not (empty? st))
+               (indexed? ls)
+               (not (empty? ls)))
+      [(last ls)
+       (make-state zloc
+                   (h/butlast ls)
+                   [z-node ;rs]
+                   (get st :pnodes)
+                   (get st :pstate)
+                   (get st :changed?))])))
+
+(comment
+
+  (-> (indexed-zip [:a :b :c])
+      down
+      right
+      right
+      left
+      node)
+  # =>
+  :b
+
+  (-> (indexed-zip [:a])
+      down
+      left)
+  # =>
+  nil
+
+  )
+
+(defn df-prev
+  ``
+  Moves to the previous z-location, depth-first.
+  If already at the root, returns nil.
+  ``
+  [zloc]
+  #
+  (defn recur
+    [a-zloc]
+    (if-let [child (and (branch? a-zloc)
+                        (down a-zloc))]
+      (recur (rightmost child))
+      a-zloc))
+  #
+  (if-let [left-loc (left zloc)]
+    (recur left-loc)
+    (up zloc)))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      df-prev
+      node)
+  # =>
+  :a
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      right
+      down
+      df-prev
+      node)
+  # =>
+  [:x :y]
+
+  )
+
+(defn insert-right
+  ``
+  Inserts `a-node` as the right sibling of the node at `zloc`,
+  without moving.
+  ``
+  [zloc a-node]
+  (let [[z-node st] zloc
+        {:ls ls :rs rs} st]
+    (if (not (empty? st))
+      [z-node
+       (make-state zloc
+                   ls
+                   [a-node ;rs]
+                   (get st :pnodes)
+                   (get st :pstate)
+                   true)]
+      (error "Called `insert-right` at root"))))
+
+(comment
+
+  (def a-zip
+    (indexed-zip [:a :b [:x :y]]))
+
+  (-> a-zip
+      down
+      (insert-right :z)
+      root)
+  # =>
+  [:a :z :b [:x :y]]
+
+  (try
+    (insert-right a-zip :e)
+    ([e] e))
+  # =>
+  "Called `insert-right` at root"
+
+  )
+
+(defn insert-left
+  ``
+  Inserts `a-node` as the left sibling of the node at `zloc`,
+  without moving.
+  ``
+  [zloc a-node]
+  (let [[z-node st] zloc
+        {:ls ls :rs rs} st]
+    (if (not (empty? st))
+      [z-node
+       (make-state zloc
+                   (h/tuple-push ls a-node)
+                   rs
+                   (get st :pnodes)
+                   (get st :pstate)
+                   true)]
+      (error "Called `insert-left` at root"))))
+
+(comment
+
+  (def a-zip
+    (indexed-zip [:a :b [:x :y]]))
+
+  (-> a-zip
+      down
+      (insert-left :z)
+      root)
+  # =>
+  [:z :a :b [:x :y]]
+
+  (try
+    (insert-left a-zip :e)
+    ([e] e))
+  # =>
+  "Called `insert-left` at root"
+
+  )
+
+(defn rights
+  "Returns siblings to the right of `zloc`."
+  [zloc]
+  (when-let [st (state zloc)]
+    (get st :rs)))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      rights)
+  # =>
+  [:b [:x :y]]
+
+  (-> (indexed-zip [:a :b])
+      down
+      right
+      rights)
+  # =>
+  []
+
+  )
+
+(defn lefts
+  "Returns siblings to the left of `zloc`."
+  [zloc]
+  (if-let [st (state zloc)
+           ls (get st :ls)]
+    ls
+    []))
+
+(comment
+
+  (-> (indexed-zip [:a :b])
+      down
+      lefts)
+  # =>
+  []
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      right
+      lefts)
+  # =>
+  [:a :b]
+
+  )
+
+(defn leftmost
+  ``
+  Returns the z-location of the leftmost sibling of the node at `zloc`,
+  or the current node's z-location if there are no siblings to the left.
+  ``
+  [zloc]
+  (let [[z-node st] zloc
+        {:ls ls :rs rs} st]
+    (if (and (not (empty? st))
+             (indexed? ls)
+             (not (empty? ls)))
+      [(first ls)
+       (make-state zloc
+                   []
+                   [;(h/rest ls) z-node ;rs]
+                   (get st :pnodes)
+                   (get st :pstate)
+                   (get st :changed?))]
+      zloc)))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      leftmost
+      node)
+  # =>
+  :a
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      rightmost
+      leftmost
+      node)
+  # =>
+  :a
+
+  )
+
+(defn path
+  "Returns the path of nodes that lead to `zloc` from the root node."
+  [zloc]
+  (when-let [st (state zloc)]
+    (get st :pnodes)))
+
+(comment
+
+  (path (indexed-zip [:a :b [:x :y]]))
+  # =>
+  nil
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      path)
+  # =>
+  [[:a :b [:x :y]]]
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      right
+      down
+      path)
+  # =>
+  [[:a :b [:x :y]] [:x :y]]
+
+  )
+
+(defn right-until
+  ``
+  Try to move right from `zloc`, calling `pred` for each
+  right sibling.  If the `pred` call has a truthy result,
+  return the corresponding right sibling.
+  Otherwise, return nil.
+  ``
+  [zloc pred]
+  (when-let [right-sib (right zloc)]
+    (if (pred right-sib)
+      right-sib
+      (right-until right-sib pred))))
+
+(comment
+
+  (-> [:code
+       [:tuple
+        [:comment "# hi there"] [:whitespace "\n"]
+        [:symbol "+"] [:whitespace " "]
+        [:number "1"] [:whitespace " "]
+        [:number "2"]]]
+      indexed-zip
+      down
+      right
+      down
+      (right-until |(match (node $)
+                      [:comment]
+                      false
+                      #
+                      [:whitespace]
+                      false
+                      #
+                      true))
+      node)
+  # =>
+  [:symbol "+"]
+
+  )
+
+(defn right-from-until
+  ``
+  Call `pred` on zloc, and if it fails, successively on
+  each right sibling until a truthy result.
+
+  Return the zloc corresponding to the one which `pred`
+  returns a truthy result for, if any.  Otherwise, return
+  nil.
+  ``
+  [zloc pred]
+  (defn helper
+    [a-zloc]
+    (when-let [right-sib (right a-zloc)]
+      (if (pred right-sib)
+        right-sib
+        (helper right-sib))))
+  #
+  (if (pred zloc)
+    zloc
+    (helper zloc)))
+
+(comment
+
+  (-> [:code
+       [:bracket-tuple
+        [:number "1"] [:whitespace " "]
+        [:number "2"]]]
+      indexed-zip
+      down
+      right
+      down
+      right
+      (right-from-until |(match (node $)
+                           [:number]
+                           true
+                           #
+                           false))
+      node)
+  # =>
+  [:number "1"]
+
+  (-> [:code
+       [:tuple
+        [:comment "# hi there"] [:whitespace "\n"]
+        [:symbol "+"] [:whitespace " "]
+        [:number "1"] [:whitespace " "]
+        [:number "2"]]]
+      indexed-zip
+      down
+      right
+      down
+      right
+      (right-from-until |(match (node $)
+                           [:number]
+                           true
+                           #
+                           false))
+      node)
+  # =>
+  [:number "1"]
+
+  )
+
+(defn left-until
+  ``
+  Try to move left from `zloc`, calling `pred` for each
+  left sibling.  If the `pred` call has a truthy result,
+  return the corresponding left sibling.
+  Otherwise, return nil.
+  ``
+  [zloc pred]
+  (when-let [left-sib (left zloc)]
+    (if (pred left-sib)
+      left-sib
+      (left-until left-sib pred))))
+
+(comment
+
+  (-> [:code
+       [:tuple
+        [:comment "# hi there"] [:whitespace "\n"]
+        [:symbol "+"] [:whitespace " "]
+        [:number "1"] [:whitespace " "]
+        [:number "2"]]]
+      indexed-zip
+      down
+      right
+      down
+      rightmost
+      (left-until |(match (node $)
+                     [:comment]
+                     false
+                     #
+                     [:whitespace]
+                     false
+                     #
+                     true))
+      node)
+  # =>
+  [:number "1"]
+
+  )
+
+(defn search-from
+  ``
+  Successively call `pred` on z-locations starting at `zloc`
+  in depth-first order.  If a call to `pred` returns a
+  truthy value, return the corresponding z-location.
+  Otherwise, return nil.
+  ``
+  [zloc pred]
+  (if (pred zloc)
+    zloc
+    (when-let [next-zloc (df-next zloc)]
+      (when (end? next-zloc)
+        (break nil))
+      (search-from next-zloc pred))))
+
+(comment
+
+  (-> (indexed-zip [:a :b :c])
+      down
+      (search-from |(match (node $)
+                      :b
+                      true))
+      node)
+  # =>
+  :b
+
+  (-> (indexed-zip [:a :b :c])
+      down
+      (search-from |(match (node $)
+                      :d
+                      true)))
+  # =>
+  nil
+
+  (-> (indexed-zip [:a :b :c])
+      down
+      (search-from |(match (node $)
+                      :a
+                      true))
+      node)
+  # =>
+  :a
+
+  )
+
+(defn search-after
+  ``
+  Successively call `pred` on z-locations starting after
+  `zloc` in depth-first order.  If a call to `pred` returns a
+  truthy value, return the corresponding z-location.
+  Otherwise, return nil.
+  ``
+  [zloc pred]
+  (when (end? zloc)
+    (break nil))
+  (when-let [next-zloc (df-next zloc)]
+    (if (pred next-zloc)
+      next-zloc
+      (search-after next-zloc pred))))
+
+(comment
+
+  (-> (indexed-zip [:b :a :b])
+      down
+      (search-after |(match (node $)
+                       :b
+                       true))
+      left
+      node)
+  # =>
+  :a
+
+  (-> (indexed-zip [:b :a :b])
+      down
+      (search-after |(match (node $)
+                       :d
+                       true)))
+  # =>
+  nil
+
+  (-> (indexed-zip [:a [:b :c [2 [3 :smile] 5]]])
+      (search-after |(match (node $)
+                       [_ :smile]
+                       true))
+      down
+      node)
+  # =>
+  3
+
+  )
+
+(defn unwrap
+  ``
+  If the node at `zloc` is a branch node, "unwrap" its children in
+  place.  If `zloc`'s node is not a branch node, do nothing.
+
+  Throws an error if `zloc` corresponds to a top-most container.
+  ``
+  [zloc]
+  (unless (branch? zloc)
+    (break zloc))
+  #
+  (when (empty? (state zloc))
+    (error "Called `unwrap` at root"))
+  #
+  (def kids (children zloc))
+  (var i (dec (length kids)))
+  (var curr-zloc zloc)
+  (while (<= 0 i) # right to left
+    (set curr-zloc
+         (insert-right curr-zloc (get kids i)))
+    (-- i))
+  # try to end up at a sensible spot
+  (set curr-zloc
+       (remove curr-zloc))
+  (if-let [ret-zloc (right curr-zloc)]
+    ret-zloc
+    curr-zloc))
+
+(comment
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      right
+      right
+      unwrap
+      root)
+  # =>
+  [:a :b :x :y]
+
+  (-> (indexed-zip [:a :b [:x :y]])
+      down
+      unwrap
+      root)
+  # =>
+  [:a :b [:x :y]]
+
+  (-> (indexed-zip [[:a]])
+      down
+      unwrap
+      root)
+  # =>
+  [:a]
+
+  (-> (indexed-zip [[:a :b] [:x :y]])
+      down
+      down
+      remove
+      unwrap
+      root)
+  # =>
+  [:b [:x :y]]
+
+  (try
+    (-> (indexed-zip [:a :b [:x :y]])
+        unwrap)
+    ([e] e))
+  # =>
+  "Called `unwrap` at root"
+
+  )
+
+(defn eq?
+  ``
+  Compare two zlocs, `a-zloc` and `b-zloc`, for equality.
+  ``
+  [a-zloc b-zloc]
+  (and (= (length (lefts a-zloc)) (length (lefts b-zloc)))
+       (= (path a-zloc) (path b-zloc))))
+
+(comment
+
+  (def iz (indexed-zip [:a :b :c :b]))
+
+  (eq? (-> iz down right)
+       (-> iz down right right right))
+  # =>
+  false
+
+  (eq? (-> iz down right)
+       (-> iz down right right right left left))
+  # =>
+  true
+
+  )
+
+(defn wrap
+  ``
+  Replace nodes from `start-zloc` through `end-zloc` with a single
+  node of the same type as `wrap-node` containing the nodes from
+  `start-zloc` through `end-zloc`.
+
+  If `end-zloc` is not specified, just wrap `start-zloc`.
+
+  The caller is responsible for ensuring the value of `end-zloc`
+  is somewhere to the right of `start-zloc`.  Throws an error if
+  an inappropriate value is specified for `end-zloc`.
+  ``
+  [start-zloc wrap-node &opt end-zloc]
+  (default end-zloc start-zloc)
+  #
+  # 1. collect all nodes to wrap
+  #
+  (def kids @[])
+  (var cur-zloc start-zloc)
+  (while (and cur-zloc
+              (not (eq? cur-zloc end-zloc))) # left to right
+    (array/push kids (node cur-zloc))
+    (set cur-zloc (right cur-zloc)))
+  (when (nil? cur-zloc)
+    (error "Called `wrap` with invalid value for `end-zloc`."))
+  # also collect the last node
+  (array/push kids (node end-zloc))
+  #
+  # 2. replace locations that will be removed with non-container nodes
+  #
+  (def dummy-node
+    (make-node start-zloc wrap-node (tuple)))
+  (set cur-zloc start-zloc)
+  # trying to do this together in step 1 is not straight-forward
+  # because the desired exiting condition for the while loop depends
+  # on cur-zloc becoming end-zloc -- if `replace` were to be used
+  # there, the termination condition never gets fulfilled properly.
+  (repeat (dec (length kids)) # left to right again
+    (set cur-zloc
+         (-> (replace cur-zloc dummy-node)
+             right)))
+  (set cur-zloc
+       (replace cur-zloc dummy-node))
+  #
+  # 3. remove all relevant locations
+  #
+  (def new-node
+    (make-node start-zloc wrap-node (tuple ;kids)))
+  (repeat (dec (length kids)) # right to left
+    (set cur-zloc
+         (remove cur-zloc)))
+  # 4. put the new container node into place
+  (replace cur-zloc new-node))
+
+(comment
+
+  (def start-zloc
+    (-> (indexed-zip [:a [:b] :c :x])
+        down
+        right))
+
+  (node start-zloc)
+  # =>
+  [:b]
+
+  (-> (wrap start-zloc [])
+      root)
+  # =>
+  [:a [[:b]] :c :x]
+
+  (def end-zloc
+    (right start-zloc))
+
+  (node end-zloc)
+  # =>
+  :c
+
+  (-> (wrap start-zloc [] end-zloc)
+      root)
+  # =>
+  [:a [[:b] :c] :x]
+
+  (try
+    (-> (wrap end-zloc [] start-zloc)
+        root)
+    ([e] e))
+  # =>
+  "Called `wrap` with invalid value for `end-zloc`."
+
+  )
+
+########################################################################
+
+(defn has-children?
+  ``
+  Returns true if `node` can have children.
+  Returns false if `node` cannot have children.
+  ``
+  [a-node]
+  (when-let [[head] a-node]
+    (truthy? (get {:document true
+                   :blank false
+                   :blockquote true
+                   :codeblock true
+                   :heading true
+                   :html true
+                   :linkdef true
+                   :list true
+                   :list-item true
+                   :paragraph true
+                   :t-break false}
+                  head))))
+
+(comment
+
+  (has-children?
+    [:paragraph @{:open? false
+                  :inlines? true}
+     @["hello"]])
+  # =>
+  true
+
+  (has-children? [:blank])
+  # =>
+  false
+
+  )
+
+(defn zip
+  ``
+  Returns a zipper location (zloc or z-location) for a tree
+  representing a CommonMark document.
+  ``
+  [a-tree]
+  (defn branch?_
+    [a-node]
+    (truthy? (and (indexed? a-node)
+                  (not (empty? a-node))
+                  (has-children? a-node))))
+  #
+  (defn children_
+    [a-node]
+    (if (branch?_ a-node)
+      (get a-node 2)
+      (error "Called `children` on a non-branch node")))
+  #
+  (defn make-node_
+    [a-node kids]
+    [(first a-node) (get a-node 1) ;kids])
+  #
+  (zipper a-tree branch?_ children_ make-node_))
+
+(defn attrs
+  ``
+  Return the attributes table for the node of a z-location.
+  ``
+  [zloc]
+  (get (node zloc) 1))
+
+(defn zip-down
+  ``
+  Convenience function that returns a zipper which has
+  already had `down` called on it.
+  ``
+  [a-tree]
+  (-> (zip a-tree)
+      down))
+

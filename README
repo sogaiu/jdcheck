@@ -1,0 +1,24 @@
+Usage: jdcheck <file-or-dir>...
+
+       jdcheck [-h|--help]|[-v|--version]
+
+Check Janet docstrings.
+
+Parameters:
+
+  <file-or-dir>          path to file or directory
+
+Options:
+
+  -h, --help             show this output
+  -v, --version          show version information
+
+Examples:
+
+  Check docstrings in the file `data/has-heading.janet`:
+
+  $ jdcheck data/has-heading.janet
+
+  Check docstrings in `data` directory:
+
+  $ jdheck data

@@ -1,0 +1,49 @@
+{:name "jdcheck"
+ :url "https://github.com/sogaiu/jdcheck"
+ :repo "git+https://github.com/sogaiu/jdcheck"
+
+ :vendored
+ [{:name "some-bundle-bits"
+   :url "https://github.com/sogaiu/some-bundle-bits"
+   :tag "70409ab34b7c762118e0d31efaa4d2f01d46fecf"
+   :paths [["sbb.janet" "bundle/"]]}
+  {:name "empathy"
+   :url "https://github.com/sogaiu/empathy"
+   :tag "bc8dc194318a466c92ccaa3151290735adce0264"
+   :paths [["empathy.janet" "src/"]]}
+  {:name "jell"
+   :url "https://github.com/sogaiu/jell"
+   :tag "718464b8b94971fd8f9e984ca81d35e2c859546e"
+   :paths [["jell" "bin/"]]}
+  {:name "jipper"
+   :url "https://github.com/sogaiu/jipper"
+   :tag "7e2876d4a4bad8cd080cf150230ecadc31ed9b20"
+   :paths [["src/helpers.janet" "src/"]]}
+  {:name "jog"
+   :url "https://github.com/sogaiu/jog"
+   :tag "1da73c15b4948e036ec17f2b7b09e28beefbbfc8"
+   :paths [["src/jipper.janet" "src/"]
+           ["src/find.janet" "src/"]
+           ["src/utils.janet" "src/"]]}
+  {:name "niche"
+   :url "https://github.com/sogaiu/niche"
+   :tag "7caf81f636bb97104aada6544219733b3c86badf"
+   :paths [["niche.janet" "bin/"]]}
+  {:name "remarkable"
+   :url "https://github.com/pyrmont/remarkable"
+   :tag "ff3a8d746f374ec7efe189cc4e9f1c6b657fc474"
+   :paths [["lib" "src/remarkable"]
+           ["LICENSE" "LICENSE.remarkable"]]}
+  {:name "tweake"
+   :url "https://github.com/sogaiu/tweake"
+   :tag "dab6256d4933ed8d5ada5b8afce0bcd6de465cc2"
+   :paths [["tweake.janet" "bin/"]]}
+  {:name "spork"
+   :url "https://github.com/janet-lang/spork"
+   :tag "60110c3688c5687cc603159bcfa38d579f95a27d"
+   :paths [["spork/sh-dsl.janet" "bin/"]]}]
+
+ :binscripts
+ [{:main "jdcheck"
+   :is-janet true}]}
+
