@@ -10116,7 +10116,7 @@
 
 
 
-(def version "2026-05-07_10-42-36")
+(def version "2026-05-07_13-40-29")
 
 (def usage
   `````
@@ -10152,30 +10152,32 @@
   [a-node]
   (def head (get a-node 0))
   (when (not (keyword? head))
-    (break true))
+    (break [true nil]))
   #
   (case head
     # unsupported blocks
-    :blank false
-    :blockquote false
-    :heading false
-    :html false
-    :linkdef false
-    :t-break false
+    :blockquote [false "block quote"]
+    :heading [false "heading"]
+    :html [false "html block"]
+    :linkdef [false "link reference definition"]
+    :t-break [false "thematic break"]
     # unsupported inlines
-    :autolink false
-    :hardbreak false
-    :link false
-    :rawhtml false
+    :autolink [false "autolink"]
+    :hardbreak [false "hard line break"]
+    :link [false "link"]
+    :rawhtml [false "raw html"]
+    # partially supported
+    :codeblock [(not (and (= :fenced (get-in a-node [1 :kind]))
+                          (= "~" (get-in a-node [1 :delim]))))
+                "fenced code block with tilde delimiters"]
     # supported
-    :document true
-    # XXX: though not fenced with tildes
-    :codeblock true
-    :codespan true
-    :emphasis true
-    :list true
-    :list-item true
-    :paragraph true))
+    :document [true nil]
+    :blank [true nil]
+    :codespan [true nil]
+    :emphasis [true nil]
+    :list [true nil]
+    :list-item [true nil]
+    :paragraph [true nil]))
 
 (defn main
   [_ & args]
@@ -10218,9 +10220,10 @@
               (break))
             #
             (def a-node (c/node a-zloc))
-            (when (not (check-node a-node))
+            (def [supported? feat-name] (check-node a-node))
+            (when (not supported?)
               (def {:bc col :bl line :name name} r)
-              (eprintf "%s:%d:%d: docstring of `%s` has: %V"
-                       sfp line col name (get a-node 0)))
+              (eprintf "%s:%d:%d: docstring of `%s` has: %s"
+                       sfp line col name feat-name))
             (set t-zloc a-zloc)))))))
 
